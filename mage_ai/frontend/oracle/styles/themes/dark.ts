@@ -92,6 +92,7 @@ export default {
     muted: SILVER,
     navigation: '#EDEDED',
     output: '#2E3036',
+    overlayBlur: 'rgba(0, 0, 0, 0.5)',
     page: '#1E1F24',
     panel: '#232429',
     popup: '#27292E',

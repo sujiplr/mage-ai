@@ -12,8 +12,10 @@ import { ThemeProvider } from 'styled-components';
 import 'react-toastify/dist/ReactToastify.min.css';
 import '@styles/globals.css';
 import AuthToken from '@api/utils/AuthToken';
+import CommandBar from '@components/CommandBar';
 import Head from '@oracle/elements/Head';
 import KeyboardContext from '@context/Keyboard';
+import StageManager from '@components/StageManager';
 import ToastWrapper from '@components/Toast/ToastWrapper';
 import api from '@api';
 import useGlobalKeyboardShortcuts from '@utils/hooks/keyboardShortcuts/useGlobalKeyboardShortcuts';
@@ -179,6 +181,11 @@ function MyApp(props: MyAppProps & AppProps) {
                 </Head>
 
                 <LoadingBar color={RED} ref={refLoadingBar} />
+
+                {/* TODO (DANGerous): Placeholder for a future command bar */}
+                {/*<CommandBar />*/}
+
+                <StageManager />
 
                 {/* @ts-ignore */}
                 <Component {...pageProps} />
