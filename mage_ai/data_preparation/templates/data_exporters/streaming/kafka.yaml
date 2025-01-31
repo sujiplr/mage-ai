@@ -3,6 +3,7 @@ bootstrap_server: "localhost:9092"
 topic: topic_name
 api_version: 0.10.2
 
+
 # Uncomment the config below to use SSL config
 # security_protocol: "SSL"
 # ssl_config:
@@ -18,3 +19,8 @@ api_version: 0.10.2
 #   mechanism: "PLAIN"
 #   username: username
 #   password: password
+
+# Uncomment the config below to use protobuf schema to deserialize message
+# serde_config:
+#   serialization_method: PROTOBUF
+#   schema_classpath: "path.to.schema.SchemaClass"

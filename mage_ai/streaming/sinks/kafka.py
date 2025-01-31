@@ -9,9 +9,11 @@ from mage_ai.shared.config import BaseConfig
 from mage_ai.shared.enum import StrEnum
 from mage_ai.streaming.constants import DEFAULT_BATCH_SIZE, DEFAULT_TIMEOUT_MS
 from mage_ai.streaming.sinks.base import BaseSink
+from mage_ai.streaming.sinks.shared import SerDeConfig, SerializationMethod
 
 
 class SecurityProtocol(StrEnum):
+    SASL_PLAINTEXT = 'SASL_PLAINTEXT'
     SASL_SSL = 'SASL_SSL'
     SSL = 'SSL'
 
@@ -40,6 +42,7 @@ class KafkaConfig(BaseConfig):
     security_protocol: SecurityProtocol = None
     ssl_config: SSLConfig = None
     sasl_config: SASLConfig = None
+    serde_config: SerDeConfig = None
     batch_size: int = DEFAULT_BATCH_SIZE
     timeout_ms: int = DEFAULT_TIMEOUT_MS
 
@@ -47,10 +50,13 @@ class KafkaConfig(BaseConfig):
     def parse_config(self, config: Dict) -> Dict:
         ssl_config = config.get('ssl_config')
         sasl_config = config.get('sasl_config')
+        serde_config = config.get('serde_config')
         if ssl_config and type(ssl_config) is dict:
             config['ssl_config'] = SSLConfig(**ssl_config)
         if sasl_config and type(sasl_config) is dict:
             config['sasl_config'] = SASLConfig(**sasl_config)
+        if serde_config and type(serde_config) is dict:
+            config['serde_config'] = SerDeConfig(**serde_config)
         return config
 
 
@@ -68,14 +74,14 @@ class KafkaSink(BaseSink):
             timeout_ms = self.config.timeout_ms
         else:
             timeout_ms = DEFAULT_TIMEOUT_MS
+
         kwargs = dict(
             bootstrap_servers=self.config.bootstrap_server,
             api_version=self.config.api_version,
-            value_serializer=lambda x: json.dumps(x).encode('utf-8'),
-            key_serializer=lambda x: x.encode('utf-8') if x else None,
             batch_size=batch_size,
             linger_ms=timeout_ms,
         )
+
         if self.config.security_protocol == SecurityProtocol.SSL:
             kwargs['security_protocol'] = SecurityProtocol.SSL
             kwargs['ssl_cafile'] = self.config.ssl_config.cafile
@@ -89,15 +95,61 @@ class KafkaSink(BaseSink):
             kwargs['sasl_plain_username'] = self.config.sasl_config.username
             kwargs['sasl_plain_password'] = self.config.sasl_config.password
 
-            if self.config.ssl_config is not None and self.config.ssl_config.cafile:
-                kwargs['ssl_cafile'] = self.config.ssl_config.cafile
+            if self.config.ssl_config:
+                kwargs['ssl_check_hostname'] = self.config.ssl_config.check_hostname
+                if self.config.ssl_config.cafile:
+                    kwargs['ssl_cafile'] = self.config.ssl_config.cafile
+                if self.config.ssl_config.certfile:
+                    kwargs['ssl_certfile'] = self.config.ssl_config.certfile
+                if self.config.ssl_config.keyfile:
+                    kwargs['ssl_keyfile'] = self.config.ssl_config.keyfile
+                if self.config.ssl_config.password:
+                    kwargs['ssl_password'] = self.config.ssl_config.password
+
+        elif self.config.security_protocol == SecurityProtocol.SASL_PLAINTEXT:
+            kwargs['security_protocol'] = SecurityProtocol.SASL_PLAINTEXT
+            kwargs['sasl_mechanism'] = self.config.sasl_config.mechanism
+            kwargs['sasl_plain_username'] = self.config.sasl_config.username
+            kwargs['sasl_plain_password'] = self.config.sasl_config.password
+
+        # Configure serialization based on serde_config
+        if self.config.serde_config is not None:
+            if self.config.serde_config.serialization_method == SerializationMethod.AVRO:
+                from confluent_avro import AvroKeyValueSerde, SchemaRegistry
+                from confluent_avro.schema_registry import HTTPBasicAuth
+
+                self.registry_client = SchemaRegistry(
+                    self.config.serde_config.schema_registry_url,
+                    HTTPBasicAuth(
+                        self.config.serde_config.schema_registry_username,
+                        self.config.serde_config.schema_registry_password,
+                    ),
+                    headers={'Content-Type': 'application/vnd.schemaregistry.v1+json'},
+                )
+                self.avro_serde = AvroKeyValueSerde(self.registry_client, self.config.topic)
+                kwargs['value_serializer'] = self.avro_serde.value.serialize
+            elif self.config.serde_config.serialization_method == SerializationMethod.PROTOBUF:
+                schema_classpath = self.config.serde_config.schema_classpath
+                if schema_classpath is not None:
+                    parts = schema_classpath.split('.')
+                    if len(parts) >= 2:
+                        class_name = parts[-1]
+                        libpath = '.'.join(parts[:-1])
+                        self.schema_class = getattr(importlib.import_module(libpath), class_name)
+                        kwargs['value_serializer'] = lambda x: self.schema_class().SerializeToString(x)
+            elif self.config.serde_config.serialization_method == SerializationMethod.RAW_VALUE:
+                kwargs['value_serializer'] = lambda x: x
+            else:
+                kwargs['value_serializer'] = lambda x: json.dumps(x).encode('utf-8')
+        else:
+            kwargs['value_serializer'] = lambda x: json.dumps(x).encode('utf-8')
+
+        kwargs['key_serializer'] = lambda x: x.encode('utf-8') if x else None
 
         self.producer = KafkaProducer(**kwargs)
         self._print('Finish initializing producer.')
 
     def write(self, message: Dict):
-        # self._print(f'Ingest message {message}, time={time.time()}')
-
         if isinstance(message, dict):
             data = message.get('data', message)
             metadata = message.get('metadata', {})
